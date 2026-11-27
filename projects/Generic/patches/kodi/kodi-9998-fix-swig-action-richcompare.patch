@@ -1,0 +1,47 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sheridan <sheridan@local>
+Date: Wed, 25 Nov 2026 16:56:00 +0000
+Subject: [PATCH] [python] Fix xbmcgui.Action richcompare (!=) under SWIG -builtin
+
+Removing the tp_richcompare slot override on Action::__eq__ lets SWIG's
+generated richcompare dispatcher handle both Py_EQ (__eq__) and Py_NE
+(__ne__), instead of routing != into _wrap_Action___eq__ and ignoring op.
+---
+ xbmc/interfaces/swig/AddonModuleXbmcgui.i | 19 +++++++++++++++++--
+ 1 file changed, 17 insertions(+), 2 deletions(-)
+
+--- a/xbmc/interfaces/swig/AddonModuleXbmcgui.i
++++ b/xbmc/interfaces/swig/AddonModuleXbmcgui.i
+@@ -147,8 +147,8 @@
+ %feature("director") WindowXMLDialog;
+ 
+ // scripts compare Actions to ints: a non-Action operand compares against the id.
+-%feature("python:slot", "tp_richcompare", functype="richcmpfunc") XBMCAddon::xbmcgui::Action::__eq__;
+ %feature("kwargs", "0") XBMCAddon::xbmcgui::Action::__eq__;
++%feature("kwargs", "0") XBMCAddon::xbmcgui::Action::__ne__;
+ %extend XBMCAddon::xbmcgui::Action {
+   PyObject* __eq__(PyObject* obj2) {
+     void* argp = 0;
+@@ -166,6 +166,22 @@
+     Py_DECREF(o1);
+     return r;
+   }
++  PyObject* __ne__(PyObject* obj2) {
++    void* argp = 0;
++    if (SWIG_IsOK(SWIG_ConvertPtr(obj2, &argp, SWIGTYPE_p_XBMCAddon__xbmcgui__Action, 0)) && argp)
++    {
++      XBMCAddon::xbmcgui::Action* a2 = reinterpret_cast<XBMCAddon::xbmcgui::Action*>(argp);
++      if ($self->id == a2->id && $self->buttonCode == a2->buttonCode &&
++          $self->fAmount1 == a2->fAmount1 && $self->fAmount2 == a2->fAmount2 &&
++          $self->fRepeat == a2->fRepeat && $self->strAction == a2->strAction)
++        Py_RETURN_FALSE;
++      Py_RETURN_TRUE;
++    }
++    PyObject* o1 = PyLong_FromLong($self->id);
++    PyObject* r = PyObject_RichCompare(o1, obj2, Py_NE);
++    Py_DECREF(o1);
++    return r;
++  }
+ }
+ 
+ %include "interfaces/legacy/Window.h"

@@ -27,6 +27,15 @@ if [ "${PROJECT}" = "Generic" ] && [ "${TARGET_ARCH}" = "x86_64" ] && [ "${DISPL
   PKG_LICENSE="GPL-3.0-or-later"
   PKG_SKIP_PATCHES="yes"
   PKG_DEPENDS_UNPACK+=" cb1-engine"
+
+  post_unpack() {
+    patch -d "${PKG_BUILD}" -p1 < "${PROJECT_DIR}/${PROJECT}/patches/kodi/kodi-9999-zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-replace-truehdonly-with-pr30326.patch"
+    patch -d "${PKG_BUILD}" -p1 < "${PROJECT_DIR}/${PROJECT}/patches/kodi/kodi-9998-fix-swig-action-richcompare.patch"
+    patch -d "${PKG_BUILD}" -p1 < "${PROJECT_DIR}/${PROJECT}/patches/kodi/kodi-9997-wire-output-telemetry-and-scantype.patch"
+    patch -d "${PKG_BUILD}" -p1 < "${PROJECT_DIR}/${PROJECT}/patches/kodi/kodi-9996-fix-audio-start-pts-interpolated.patch"
+    patch -d "${PKG_BUILD}" -p1 < "${PROJECT_DIR}/${PROJECT}/patches/kodi/kodi-9997-render-engine-no-popin.patch"
+    patch -d "${PKG_BUILD}" -p1 < "${PROJECT_DIR}/${PROJECT}/patches/kodi/kodi-9997-dedupe-unsupported-scaling-warning.patch"
+  }
 fi
 
 if [ "${TARGET_ARCH}" = "arm" ]; then

@@ -13,6 +13,10 @@ This is a dedicated fork of [CroqueMr/libreelec-CB1](https://github.com/CroqueMr
 4. **4K50/4K60 10-bit YCbCr 4:2:0 HDR10 (`linux-9958-dp-pcon-hdr10-420.patch`)**
    Enables `ycbcr420_passthrough` and VSC SDP `colorimetry_support` on allowlisted PS185 PCONs and prefers 10-bit YCbCr 4:2:0 over 8-bit RGB when 4K50/4K60 HDR10 cannot fit in 10-bit RGB.
 
+5. **Pending Upstream Kodi Fixes (`kodi-9998`, `kodi-9999`)**
+   * `kodi-9998-fix-swig-action-richcompare.patch` ([`xbmc/xbmc#30822`](https://github.com/xbmc/xbmc/pull/30822)): fixes `xbmcgui.Action !=` comparisons under Kodi 22 SWIG `-builtin` (for example PM4K `OK` -> `Back` closing the OSD instead of stopping playback).
+   * `kodi-9999-...-replace-truehdonly-with-pr30326.patch` ([`xbmc/xbmc#30326`](https://github.com/xbmc/xbmc/pull/30326) / [`CroqueMr/libreelec-CB1#310`](https://github.com/CroqueMr/libreelec-CB1/issues/310)): prevents false E-AC-3/DTS sync on TrueHD seeks.
+
 ## Verified hardware and support policy
 
 * **Tested hardware:** Intel NUC 11 (`CM11EBV58W`, Tiger Lake i5-1145G7) with onboard Parade PS185 DP-to-HDMI PCON feeding a Sony Bravia 7 (eARC to Samsung Q990F).
