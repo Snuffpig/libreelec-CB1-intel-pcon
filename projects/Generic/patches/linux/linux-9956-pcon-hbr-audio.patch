@@ -633,6 +633,30 @@ PCON (Parade PS185):
  
  	/* Behavior of setting index being equal to or greater than
  	 * Device List Length is not predictable
+@@ -2307,9 +2319,21 @@
+ 	val = convert_from_spdif_status(spdif->status);
+ 	val |= spdif->ctls & 1;
+ 	change = spdif->ctls != val;
++	if (change && nid != (u16)-1) {
++		bool skip_hw = false;
++
++		if ((codec->core.vendor_id >> 16) == 0x8086 &&
++		    (spdif->ctls & AC_DIG1_NONAUDIO) &&
++		    !(val & AC_DIG1_NONAUDIO)) {
++			skip_hw = codec->bus->core.audio_component ?
++				codec->bus->core.audio_component->pcon_fixup :
++				(dmi_get_system_info(DMI_BOARD_NAME) &&
++				 strstr(dmi_get_system_info(DMI_BOARD_NAME), "CM11EB"));
++		}
++		if (!skip_hw)
++			set_dig_out_convert(codec, nid, val & 0xff, (val >> 8) & 0xff);
++	}
+ 	spdif->ctls = val;
+-	if (change && nid != (u16)-1)
+-		set_dig_out_convert(codec, nid, val & 0xff, (val >> 8) & 0xff);
+ 	return change || spdif->status != old_status;
+ }
+ 
 --- a/sound/hda/codecs/hdmi/hdmi_local.h
 +++ b/sound/hda/codecs/hdmi/hdmi_local.h
 @@ -52,11 +52,25 @@

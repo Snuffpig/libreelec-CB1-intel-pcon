@@ -6,7 +6,7 @@ This is a dedicated fork of [CroqueMr/libreelec-CB1](https://github.com/CroqueMr
 
 1. **Standard Dolby Vision over DP-to-HDMI PCON (`linux-9955-dp-pcon-dv.patch`, `linux-9984-dp-pcon-dv-bridge.patch`)**
    Standard (TV-led) Dolby Vision tunneling over an onboard DP-to-HDMI protocol converter on Gen11+ Intel graphics, plus `verified_bridge` support in `drm_dvbridge_validate_link()`.
-2. **HBR Bitstream Audio and 7.1 LPCM (`linux-9956-pcon-hbr-audio.patch`, `0002-hda-intel-disable-iec958-preserve.patch`)**
+2. **HBR Bitstream Audio and 7.1 LPCM (`linux-9956-pcon-hbr-audio.patch`)**
    Fixes TrueHD 7.1 Atmos, DTS-HD MA, and multichannel LPCM playback across start, pause/resume, seek, stop/resume, and track switches on Intel Tiger Lake + Parade PS185 PCONs.
 3. **10-bit HDR10 Settle (`linux-9957-dp-pcon-hdr10-10bit-settle.patch`)**
    Tracks PS185 10-bit mode entry (`pipe_bpp >= 30`) and waits out the 2000 ms settle window (or schedules a post-settle link retrain) so the converter does not drop the HDR10 DRM InfoFrame when switching from 8-bit SDR to 10-bit HDR10.
