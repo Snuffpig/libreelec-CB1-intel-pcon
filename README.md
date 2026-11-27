@@ -1,3 +1,6 @@
+> [!NOTE]
+> **Intel NUC / DP-to-HDMI PCON Fork (`Snuffpig/libreelec-CB1-intel-pcon`):** This fork tracks [`CroqueMr/libreelec-CB1`](https://github.com/CroqueMr/libreelec-CB1) and adds `CM11EB*` DMI-gated Intel Gen12 DP-to-HDMI PCON (PS185) Dolby Vision, HDR10, and HBR audio fixes (with `i915.dv_pcon=1` opt-in for other Gen12/13+ PCON hardware). See **[`NUC11-PCON.md`](NUC11-PCON.md)** for full details, or download builds from **[Releases](https://github.com/Snuffpig/libreelec-CB1-intel-pcon/releases)**.
+
 <p>
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/cb1/images/libreelec-cb1-header-thin.png">
