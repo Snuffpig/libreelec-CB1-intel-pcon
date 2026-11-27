@@ -599,15 +599,16 @@ PCON (Parade PS185):
  	else
 --- a/sound/hda/common/codec.c
 +++ b/sound/hda/common/codec.c
-@@ -7,6 +7,7 @@
+@@ -7,6 +7,8 @@
  
  #include <linux/init.h>
  #include <linux/delay.h>
++#include <drm/drm_audio_component.h>
 +#include <linux/dmi.h>
  #include <linux/slab.h>
  #include <linux/minmax.h>
  #include <linux/mutex.h>
-@@ -404,11 +405,15 @@
+@@ -404,11 +406,21 @@
  	/* AC_PAR_DEVLIST_LEN is 0 based. */
  	num_devices = snd_hda_get_num_devices(codec, nid) + 1;
  	/* If Device List Length is 0 (num_device = 1),
@@ -618,9 +619,15 @@ PCON (Parade PS185):
  	 */
 -	if (num_devices == 1)
 +	if (num_devices == 1) {
-+		if ((codec->core.vendor_id >> 16) == 0x8086 &&
-+		    dmi_match(DMI_BOARD_NAME, "CM11EBV58W"))
-+			snd_hda_codec_write(codec, nid, 0, AC_VERB_SET_DEVICE_SEL, 0);
++		if ((codec->core.vendor_id >> 16) == 0x8086) {
++			bool pcon_fixup = codec->bus->core.audio_component ?
++				codec->bus->core.audio_component->pcon_fixup :
++				(dmi_get_system_info(DMI_BOARD_NAME) &&
++				 strstr(dmi_get_system_info(DMI_BOARD_NAME), "CM11EB"));
++
++			if (pcon_fixup)
++				snd_hda_codec_write(codec, nid, 0, AC_VERB_SET_DEVICE_SEL, 0);
++		}
  		return 0;
 +	}
  
