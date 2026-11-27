@@ -1,0 +1,321 @@
+From: Snuffpig <181518943+Snuffpig@users.noreply.github.com>
+Subject: [PATCH] drm/i915 & drm/amdgpu: Expose read-only CB1_OUTPUT_FORMAT and CB1_OUTPUT_BPC telemetry
+
+Add immutable, read-only connector properties CB1_OUTPUT_FORMAT (enum:
+Unknown, RGB 4:4:4, YCbCr 4:4:4, YCbCr 4:2:2, YCbCr 4:2:0) and
+CB1_OUTPUT_BPC (range 0..16) on Intel i915 (DP/PCON and HDMI) and AMD
+amdgpu_dm digital connectors.
+
+Values are updated solely from committed hardware/CRTC/stream state on
+enable, disable, and i915 initial hardware readout, with zero impact on
+modeset selection or atomic validation.
+
+--- a/drivers/gpu/drm/i915/display/intel_display_types.h
++++ b/drivers/gpu/drm/i915/display/intel_display_types.h
+@@ -531,6 +531,8 @@
+ 	struct drm_property *dv_lab_property;
+ 	struct drm_property *lldv_format_property;
+ 	struct drm_property *dv_hdr10_property;
++	struct drm_property *cb1_output_format_property;
++	struct drm_property *cb1_output_bpc_property;
+ 	/* Diagnostics only: no influence on DV admission or recovery. */
+ 	struct ratelimit_state dv_log_limit;
+ 	/*
+--- a/drivers/gpu/drm/i915/display/intel_display.h
++++ b/drivers/gpu/drm/i915/display/intel_display.h
+@@ -524,4 +524,9 @@
+ bool intel_scanout_needs_vtd_wa(struct intel_display *display);
+ int intel_crtc_num_joined_pipes(const struct intel_crtc_state *crtc_state);
+ 
++void intel_connector_attach_cb1_output_telemetry(struct intel_connector *connector);
++void intel_connector_update_cb1_output_telemetry(struct intel_connector *connector,
++						 const struct intel_crtc_state *crtc_state,
++						 const struct drm_connector_state *conn_state);
++
+ #endif
+--- a/drivers/gpu/drm/i915/display/intel_display.c
++++ b/drivers/gpu/drm/i915/display/intel_display.c
+@@ -126,6 +126,7 @@
+ #include "intel_vdsc_regs.h"
+ #include "intel_vga.h"
+ #include "intel_vrr.h"
++#include "intel_dv_lab_policy.h"
+ #include "intel_wm.h"
+ #include "skl_scaler.h"
+ #include "skl_universal_plane.h"
+@@ -1442,6 +1443,78 @@
+ 	}
+ }
+ 
++void intel_connector_attach_cb1_output_telemetry(struct intel_connector *connector)
++{
++	struct drm_device *drm = connector->base.dev;
++	static const struct drm_prop_enum_list formats[] = {
++		{ 0, "Unknown" },
++		{ 1, "RGB 4:4:4" },
++		{ 2, "YCbCr 4:4:4" },
++		{ 3, "YCbCr 4:2:2" },
++		{ 4, "YCbCr 4:2:0" },
++	};
++
++	if (!connector->cb1_output_format_property) {
++		connector->cb1_output_format_property = drm_property_create_enum(drm,
++			DRM_MODE_PROP_ENUM | DRM_MODE_PROP_IMMUTABLE,
++			"CB1_OUTPUT_FORMAT", formats, ARRAY_SIZE(formats));
++		if (connector->cb1_output_format_property)
++			drm_object_attach_property(&connector->base.base,
++						   connector->cb1_output_format_property, 0);
++	}
++
++	if (!connector->cb1_output_bpc_property) {
++		connector->cb1_output_bpc_property = drm_property_create_range(drm,
++			DRM_MODE_PROP_RANGE | DRM_MODE_PROP_IMMUTABLE,
++			"CB1_OUTPUT_BPC", 0, 16);
++		if (connector->cb1_output_bpc_property)
++			drm_object_attach_property(&connector->base.base,
++						   connector->cb1_output_bpc_property, 0);
++	}
++}
++
++void intel_connector_update_cb1_output_telemetry(struct intel_connector *connector,
++						 const struct intel_crtc_state *crtc_state,
++						 const struct drm_connector_state *conn_state)
++{
++	u64 format = 0;
++	u64 bpc = 0;
++
++	if (!connector || (!connector->cb1_output_format_property && !connector->cb1_output_bpc_property))
++		return;
++
++	if (crtc_state && crtc_state->hw.active) {
++		u8 lldv = conn_state ? to_intel_digital_connector_state(conn_state)->lldv_format : 0;
++
++		if (lldv && lldv != INTEL_LLDV_RGB10) {
++			format = 3;
++		} else {
++			switch (crtc_state->sink_format) {
++			case INTEL_OUTPUT_FORMAT_RGB:
++				format = 1;
++				break;
++			case INTEL_OUTPUT_FORMAT_YCBCR444:
++				format = 2;
++				break;
++			case INTEL_OUTPUT_FORMAT_YCBCR420:
++				format = 4;
++				break;
++			default:
++				format = 0;
++				break;
++			}
++		}
++		bpc = clamp_t(u64, crtc_state->pipe_bpp / 3, 0, 16);
++	}
++
++	if (connector->cb1_output_format_property)
++		drm_object_property_set_value(&connector->base.base,
++					      connector->cb1_output_format_property, format);
++	if (connector->cb1_output_bpc_property)
++		drm_object_property_set_value(&connector->base.base,
++					      connector->cb1_output_bpc_property, bpc);
++}
++
+ static void intel_encoders_enable(struct intel_atomic_state *state,
+ 				  struct intel_crtc *crtc)
+ {
+@@ -1462,6 +1535,8 @@
+ 			encoder->enable(state, encoder,
+ 					crtc_state, conn_state);
+ 		intel_opregion_notify_encoder(encoder, true);
++		intel_connector_update_cb1_output_telemetry(to_intel_connector(conn),
++							      crtc_state, conn_state);
+ 	}
+ }
+ 
+@@ -1485,6 +1560,8 @@
+ 		if (encoder->disable)
+ 			encoder->disable(state, encoder,
+ 					 old_crtc_state, old_conn_state);
++		intel_connector_update_cb1_output_telemetry(to_intel_connector(conn),
++							      NULL, NULL);
+ 	}
+ }
+ 
+--- a/drivers/gpu/drm/i915/display/intel_dp.c
++++ b/drivers/gpu/drm/i915/display/intel_dp.c
+@@ -7441,6 +7441,8 @@
+ 
+ 	if (HAS_VRR(display))
+ 		drm_connector_attach_vrr_capable_property(&connector->base);
++
++	intel_connector_attach_cb1_output_telemetry(connector);
+ }
+ 
+ static void
+--- a/drivers/gpu/drm/i915/display/intel_hdmi.c
++++ b/drivers/gpu/drm/i915/display/intel_hdmi.c
+@@ -3567,6 +3567,8 @@
+ 
+ 	if (!HAS_GMCH(display))
+ 		drm_connector_attach_max_bpc_property(&connector->base, 8, 12);
++
++	intel_connector_attach_cb1_output_telemetry(connector);
+ }
+ 
+ /*
+--- a/drivers/gpu/drm/i915/display/intel_modeset_setup.c
++++ b/drivers/gpu/drm/i915/display/intel_modeset_setup.c
+@@ -1008,4 +1008,20 @@
+ 	intel_display_power_put(display, POWER_DOMAIN_INIT, wakeref);
+ 
+ 	intel_display_power_sanitize_state(display);
+-}
++
++	{
++		struct drm_connector_list_iter conn_iter;
++		struct intel_connector *connector;
++
++		drm_connector_list_iter_begin(display->drm, &conn_iter);
++		for_each_intel_connector_iter(connector, &conn_iter) {
++			const struct drm_connector_state *conn_state = connector->base.state;
++			const struct intel_crtc_state *crtc_state =
++				(conn_state && conn_state->crtc && conn_state->crtc->state) ?
++				to_intel_crtc_state(conn_state->crtc->state) : NULL;
++
++			intel_connector_update_cb1_output_telemetry(connector, crtc_state, conn_state);
++		}
++		drm_connector_list_iter_end(&conn_iter);
++	}
++}
+--- a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.h
++++ b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.h
+@@ -832,6 +832,8 @@
+ 	struct drm_property *lldv_format_property;
+ 	struct drm_property *lldv_native_formats_property;
+ 	struct drm_property *hdr10_deep_color_property;
++	struct drm_property *cb1_output_format_property;
++	struct drm_property *cb1_output_bpc_property;
+ 	uint32_t connector_id;
+ 	int bl_idx;
+ 
+--- a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_connector.c
++++ b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_connector.c
+@@ -3667,6 +3667,30 @@
+ 
+ 		if (adev->dm.hdcp_workqueue)
+ 			drm_connector_attach_content_protection_property(&aconnector->base, true);
++
++		{
++			static const struct drm_prop_enum_list formats[] = {
++				{ 0, "Unknown" },
++				{ 1, "RGB 4:4:4" },
++				{ 2, "YCbCr 4:4:4" },
++				{ 3, "YCbCr 4:2:2" },
++				{ 4, "YCbCr 4:2:0" },
++			};
++
++			aconnector->cb1_output_format_property = drm_property_create_enum(adev_to_drm(adev),
++				DRM_MODE_PROP_ENUM | DRM_MODE_PROP_IMMUTABLE,
++				"CB1_OUTPUT_FORMAT", formats, ARRAY_SIZE(formats));
++			if (aconnector->cb1_output_format_property)
++				drm_object_attach_property(&aconnector->base.base,
++							   aconnector->cb1_output_format_property, 0);
++
++			aconnector->cb1_output_bpc_property = drm_property_create_range(adev_to_drm(adev),
++				DRM_MODE_PROP_RANGE | DRM_MODE_PROP_IMMUTABLE,
++				"CB1_OUTPUT_BPC", 0, 16);
++			if (aconnector->cb1_output_bpc_property)
++				drm_object_attach_property(&aconnector->base.base,
++							   aconnector->cb1_output_bpc_property, 0);
++		}
+ 	}
+ 
+ 	if (connector_type == DRM_MODE_CONNECTOR_eDP) {
+--- a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.c
++++ b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.c
+@@ -4715,6 +4715,67 @@
+ }
+ EXPORT_IF_KUNIT(amdgpu_dm_mod_power_setup_streams);
+ 
++static void amdgpu_dm_update_cb1_output_telemetry(struct amdgpu_dm_connector *aconnector,
++						   const struct dc_stream_state *stream)
++{
++	u64 format = 0;
++	u64 bpc = 0;
++
++	if (!aconnector)
++		return;
++
++	if (stream) {
++		switch (stream->timing.pixel_encoding) {
++		case PIXEL_ENCODING_RGB:
++			format = 1;
++			break;
++		case PIXEL_ENCODING_YCBCR444:
++			format = 2;
++			break;
++		case PIXEL_ENCODING_YCBCR422:
++			format = 3;
++			break;
++		case PIXEL_ENCODING_YCBCR420:
++			format = 4;
++			break;
++		default:
++			format = 0;
++			break;
++		}
++
++		switch (stream->timing.display_color_depth) {
++		case COLOR_DEPTH_666:
++			bpc = 6;
++			break;
++		case COLOR_DEPTH_888:
++			bpc = 8;
++			break;
++		case COLOR_DEPTH_101010:
++			bpc = 10;
++			break;
++		case COLOR_DEPTH_121212:
++			bpc = 12;
++			break;
++		case COLOR_DEPTH_141414:
++			bpc = 14;
++			break;
++		case COLOR_DEPTH_161616:
++			bpc = 16;
++			break;
++		default:
++			bpc = 0;
++			break;
++		}
++	}
++
++	if (aconnector->cb1_output_format_property)
++		drm_object_property_set_value(&aconnector->base.base,
++					      aconnector->cb1_output_format_property, format);
++	if (aconnector->cb1_output_bpc_property)
++		drm_object_property_set_value(&aconnector->base.base,
++					      aconnector->cb1_output_bpc_property, bpc);
++}
++
+ static void amdgpu_dm_commit_streams(struct drm_atomic_commit *state,
+ 					struct dc_state *dc_state)
+ {
+@@ -5321,6 +5382,18 @@
+ 	}
+ 
+ 	amdgpu_dm_update_hdcp(state);
++
++	for_each_new_connector_in_state(state, connector, new_con_state, i) {
++		struct amdgpu_dm_connector *aconnector = to_amdgpu_dm_connector(connector);
++		const struct dc_stream_state *stream = NULL;
++
++		if (new_con_state->crtc) {
++			new_crtc_state = drm_atomic_get_new_crtc_state(state, new_con_state->crtc);
++			if (new_crtc_state && new_crtc_state->active)
++				stream = to_dm_crtc_state(new_crtc_state)->stream;
++		}
++		amdgpu_dm_update_cb1_output_telemetry(aconnector, stream);
++	}
+ 
+ 	/* Handle connector state changes */
+ 	for_each_oldnew_connector_in_state(state, connector, old_con_state, new_con_state, i) {

@@ -17,6 +17,12 @@ This is a dedicated fork of [CroqueMr/libreelec-CB1](https://github.com/CroqueMr
    * `kodi-9998-fix-swig-action-richcompare.patch` ([`xbmc/xbmc#30822`](https://github.com/xbmc/xbmc/pull/30822)): fixes `xbmcgui.Action !=` comparisons under Kodi 22 SWIG `-builtin` (for example PM4K `OK` -> `Back` closing the OSD instead of stopping playback).
    * `kodi-9999-...-replace-truehdonly-with-pr30326.patch` ([`xbmc/xbmc#30326`](https://github.com/xbmc/xbmc/pull/30326) / [`CroqueMr/libreelec-CB1#310`](https://github.com/CroqueMr/libreelec-CB1/issues/310)): prevents false E-AC-3/DTS sync on TrueHD seeks.
 
+6. **Read-Only Wire Telemetry & PlayerProcessInfo Polish (`#340`, `#117`-`#119`)**
+   * `linux-9985-cb1-output-format-telemetry.patch`, `nvidia-open-kernel-modules-9012-cb1-output-format.patch`, `nvidia-pascal-modeset-9011-cb1-output-format.patch` ([`CroqueMr/libreelec-CB1#340`](https://github.com/CroqueMr/libreelec-CB1/pull/340)): exposes read-only `CB1_OUTPUT_FORMAT` and `CB1_OUTPUT_BPC` connector properties.
+   * `kodi-9997-wire-output-telemetry-and-scantype.patch` ([`CroqueMr/xbmc#117`](https://github.com/CroqueMr/xbmc/pull/117)), `kodi-9997-render-engine-no-popin.patch` ([`CroqueMr/xbmc#118`](https://github.com/CroqueMr/xbmc/pull/118)), `kodi-9997-dedupe-unsupported-scaling-warning.patch` ([`CroqueMr/xbmc#119`](https://github.com/CroqueMr/xbmc/pull/119)).
+7. **Live TV Audio Start PTS Fix (`kodi-9996`)**
+   * `kodi-9996-fix-audio-start-pts-interpolated.patch` ([`xbmc/xbmc#30850`](https://github.com/xbmc/xbmc/pull/30850)): preserves interpolated audio start PTS for `PLAYER_STARTED` on MPEG-TS streams (e.g. UK Freeview HD `aac_latm`).
+
 ## Verified hardware and support policy
 
 * **Tested hardware:** Intel NUC 11 (`CM11EBV58W`, Tiger Lake i5-1145G7) with onboard Parade PS185 DP-to-HDMI PCON feeding a Sony Bravia 7 (eARC to Samsung Q990F).

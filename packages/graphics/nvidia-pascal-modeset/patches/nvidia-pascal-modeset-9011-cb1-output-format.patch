@@ -1,0 +1,162 @@
+From: Snuffpig <181518943+Snuffpig@users.noreply.github.com>
+Subject: [PATCH] nvidia-drm: Expose read-only CB1_OUTPUT_FORMAT connector telemetry
+
+Mirror CB1_OUTPUT_BPC by adding a read-only CB1_OUTPUT_FORMAT enum
+connector property (Unknown, RGB 4:4:4, YCbCr 4:4:4, YCbCr 4:2:2,
+YCbCr 4:2:0) backed by NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_SPACE via a
+new getCurrentOutputFormat callback appended to NvKmsKapiFunctionsTable.
+
+--- a/src/nvidia-modeset/kapi/interface/nvkms-kapi.h
++++ b/src/nvidia-modeset/kapi/interface/nvkms-kapi.h
+@@ -1622,6 +1622,8 @@
+     void (*markHdr10plusFault)(struct NvKmsKapiDevice *device, NvU32 head);
+     NvBool (*getNativeLldv422)(struct NvKmsKapiDevice *device, NvKmsKapiDisplay display,
+                               NvU32 head, NvBool *active);
++    NvU32 (*getCurrentOutputFormat)(struct NvKmsKapiDevice *device,
++                                    NvKmsKapiDisplay display, NvU32 head);
+ };
+ 
+ /** @} */
+--- a/src/nvidia-modeset/kapi/src/nvkms-kapi.c
++++ b/src/nvidia-modeset/kapi/src/nvkms-kapi.c
+@@ -2526,6 +2526,48 @@
+ }
+ 
+ /* Query accepted native output, never the requested framebuffer/max precision. */
++static NvU32 GetCurrentOutputFormat(struct NvKmsKapiDevice *device,
++                                    NvKmsKapiDisplay display, NvU32 head)
++{
++    struct NvKmsGetDpyAttributeParams params = { };
++
++    if (device == NULL) {
++        return 0;
++    }
++    params.request.deviceHandle = device->hKmsDevice;
++    params.request.dispHandle = device->hKmsDisp;
++    params.request.dpyId = nvNvU32ToDpyId(display);
++    params.request.attribute = NV_KMS_DPY_ATTRIBUTE_HEAD;
++    if (!nvkms_ioctl_from_kapi(device->pKmsOpen,
++            NVKMS_IOCTL_GET_DPY_ATTRIBUTE, &params, sizeof(params)) ||
++        params.reply.value != head) {
++        return 0;
++    }
++    params.request.attribute = NV_KMS_DPY_ATTRIBUTE_DPMS;
++    if (!nvkms_ioctl_from_kapi(device->pKmsOpen,
++            NVKMS_IOCTL_GET_DPY_ATTRIBUTE, &params, sizeof(params)) ||
++        params.reply.value != NV_KMS_DPY_ATTRIBUTE_DPMS_ON) {
++        return 0;
++    }
++    params.request.attribute = NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_SPACE;
++    if (!nvkms_ioctl_from_kapi(device->pKmsOpen,
++            NVKMS_IOCTL_GET_DPY_ATTRIBUTE, &params, sizeof(params))) {
++        return 0;
++    }
++    switch (params.reply.value) {
++    case NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_SPACE_RGB:
++        return 1;
++    case NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_SPACE_YCbCr444:
++        return 2;
++    case NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_SPACE_YCbCr422:
++        return 3;
++    case NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_SPACE_YCbCr420:
++        return 4;
++    default:
++        return 0;
++    }
++}
++
+ static NvU32 GetCurrentOutputBpc(struct NvKmsKapiDevice *device,
+                                  NvKmsKapiDisplay display, NvU32 head)
+ {
+@@ -4295,6 +4337,7 @@
+     funcsTable->getDisplayMode      = GetDisplayMode;
+     funcsTable->getNativeLldv422 = GetNativeLldv422;
+     funcsTable->getCurrentOutputBpc = GetCurrentOutputBpc;
++    funcsTable->getCurrentOutputFormat = GetCurrentOutputFormat;
+     funcsTable->getHdr10plusStatus = GetHdr10plusStatus;
+     funcsTable->markHdr10plusFault = MarkHdr10plusFault;
+     funcsTable->validateDisplayMode = ValidateDisplayMode;
+--- a/kernel-open/nvidia-drm/nvidia-drm-priv.h
++++ b/kernel-open/nvidia-drm/nvidia-drm-priv.h
+@@ -89,6 +89,7 @@
+ 
+ struct nv_drm_device {
+     struct drm_property *cb1_output_bpc_property;
++    struct drm_property *cb1_output_format_property;
+     struct drm_property *cb1_native_tmds_property;
+     struct drm_property *cb1_hdr10plus_status_property;
+     struct drm_property *cb1_deep_color_property;
+--- a/kernel-open/nvidia-drm/nvidia-drm-drv.c
++++ b/kernel-open/nvidia-drm/nvidia-drm-drv.c
+@@ -684,6 +684,20 @@
+         0, "CB1_OUTPUT_BPC", 0, 16);
+     if (!nv_dev->cb1_output_bpc_property) {
+         return -ENOMEM;
++    }
++    {
++        static const struct drm_prop_enum_list formats[] = {
++            { 0, "Unknown" },
++            { 1, "RGB 4:4:4" },
++            { 2, "YCbCr 4:4:4" },
++            { 3, "YCbCr 4:2:2" },
++            { 4, "YCbCr 4:2:0" },
++        };
++        nv_dev->cb1_output_format_property = drm_property_create_enum(nv_dev->dev,
++            0, "CB1_OUTPUT_FORMAT", formats, ARRAY_SIZE(formats));
++        if (!nv_dev->cb1_output_format_property) {
++            return -ENOMEM;
++        }
+     }
+     {
+         static const struct drm_prop_enum_list status[] = {
+--- a/kernel-open/nvidia-drm/nvidia-drm-connector.c
++++ b/kernel-open/nvidia-drm/nvidia-drm-connector.c
+@@ -353,6 +353,19 @@
+         to_nv_crtc(state->crtc)->head);
+ }
+ 
++static NvU32 nv_drm_connector_current_output_format(
++    struct drm_connector *connector, const struct drm_connector_state *state)
++{
++    struct nv_drm_device *nv_dev = to_nv_device(connector->dev);
++    if (connector->status != connector_status_connected ||
++        !state->crtc || !state->best_encoder || !state->crtc->state->active) {
++        return 0;
++    }
++    return nvKms->getCurrentOutputFormat(nv_dev->pDevice,
++        to_nv_encoder(state->best_encoder)->hDisplay,
++        to_nv_crtc(state->crtc)->head);
++}
++
+ static bool nv_drm_native_lldv_422(struct drm_connector *connector)
+ {
+     const struct nv_drm_connector *c = to_nv_connector(connector);
+@@ -405,6 +418,10 @@
+     }
+     if (p == d->cb1_output_bpc_property) {
+         *val = nv_drm_connector_current_output_bpc(c, s);
++        return 0;
++    }
++    if (p == d->cb1_output_format_property) {
++        *val = nv_drm_connector_current_output_format(c, s);
+         return 0;
+     }
+     if (p == d->cb1_lldv_format_property) *val = ns->lldv_format;
+@@ -850,6 +867,8 @@
+             nv_dev->cb1_deep_color_property, 0);
+         drm_object_attach_property(&nv_connector->base.base,
+                                    nv_dev->cb1_output_bpc_property, 0);
++        drm_object_attach_property(&nv_connector->base.base,
++                                   nv_dev->cb1_output_format_property, 0);
+         nv_connector->base.max_bpc_property = nv_dev->cb1_bpc_property;
+         drm_object_attach_property(&nv_connector->base.base,
+             nv_dev->cb1_bpc_property, 12);
+@@ -879,6 +898,8 @@
+     } else if (nv_connector->type == NVKMS_CONNECTOR_TYPE_DP) {
+         drm_object_attach_property(&nv_connector->base.base,
+                                    nv_dev->cb1_output_bpc_property, 0);
++        drm_object_attach_property(&nv_connector->base.base,
++                                   nv_dev->cb1_output_format_property, 0);
+ #if defined(NV_DRM_MODE_CREATE_DP_COLORSPACE_PROPERTY_HAS_SUPPORTED_COLORSPACES_ARG)
+         if (drm_mode_create_dp_colorspace_property(
+                 &nv_connector->base,

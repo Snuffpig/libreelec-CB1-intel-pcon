@@ -1,0 +1,49 @@
+From: Snuffpig <181518943+Snuffpig@users.noreply.github.com>
+Subject: [PATCH] LinuxRendererGLES: deduplicate unsupported scaling method warning
+
+During DVBridge playback, SelectScalingMethod() calls
+ResolveScalingMethod() on every rendered frame (including while paused
+or on 1:1 4K video where no scaling occurs). When a user's saved
+default scaling method is unsupported by GLES (e.g. Lanczos3), this
+logged a warning on every vblank instead of once per stream/setting.
+
+Track the last warned scaling method in CLinuxRendererGLES so the
+fallback warning is emitted once when an unsupported method is first
+seen (or changed) and reset if a supported method is later selected.
+
+--- a/xbmc/cores/VideoPlayer/VideoRenderers/LinuxRendererGLES.h
++++ b/xbmc/cores/VideoPlayer/VideoRenderers/LinuxRendererGLES.h
+@@ -282,6 +282,7 @@
+   Shaders::GLES::BaseVideoFilterShader* m_pVideoFilterShader{nullptr};
+   ESCALINGMETHOD m_scalingMethod{VS_SCALINGMETHOD_LINEAR};
+   ESCALINGMETHOD m_scalingMethodGui{VS_SCALINGMETHOD_MAX};
++  mutable ESCALINGMETHOD m_warnedScalingMethod{VS_SCALINGMETHOD_MAX};
+   bool m_fullRange;
+   AVColorPrimaries m_srcPrimaries;
+   AVColorSpace m_srcColSpace;
+--- a/xbmc/cores/VideoPlayer/VideoRenderers/LinuxRendererGLES.cpp
++++ b/xbmc/cores/VideoPlayer/VideoRenderers/LinuxRendererGLES.cpp
+@@ -1028,11 +1028,19 @@
+ {
+   if(!Supports(method))
+   {
+-    CLog::Log(LOGWARNING,
+-              "CLinuxRendererGLES::UpdateVideoFilter - chosen scaling method {}, is not supported "
+-              "by renderer",
+-              method);
++    if (m_warnedScalingMethod != method)
++    {
++      CLog::Log(LOGWARNING,
++                "CLinuxRendererGLES::ResolveScalingMethod - chosen scaling method {}, is not "
++                "supported by renderer",
++                method);
++      m_warnedScalingMethod = method;
++    }
+     method = VS_SCALINGMETHOD_LINEAR;
++  }
++  else
++  {
++    m_warnedScalingMethod = VS_SCALINGMETHOD_MAX;
+   }
+ 
+   if (method == VS_SCALINGMETHOD_AUTO)

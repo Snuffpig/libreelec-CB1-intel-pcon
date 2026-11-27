@@ -1,0 +1,89 @@
+From: Snuffpig <181518943+Snuffpig@users.noreply.github.com>
+Subject: [PATCH] VideoPlayerAudio: preserve interpolated audio start PTS for PLAYER_STARTED
+
+When an audio stream (such as MPEG-TS AAC-LATM on Live TV) packs multiple
+decoded frames per timestamped PES packet, intermediate frames arrive with
+DVD_NOPTS_VALUE and inherit their exact PTS from m_audioClock.
+
+If the frame that crosses the 75% sink cache threshold during SYNC_STARTING
+happens to be one of these interpolated frames, CVideoPlayerAudio previously
+sent DVD_NOPTS_VALUE in PLAYER_STARTED. On realtime streams this caused
+CVideoPlayer to skip the realtime audio clock anchor (including its 400 ms
+headroom) and anchor directly to video, forcing ActiveAE to discard up to
+~1 second of buffered audio and triggering an immediate audio stall and
+re-buffering cycle.
+
+Track whether m_audioClock has been anchored by a real packet timestamp
+since the last open/reset/flush/drop/codec-switch, and pass audioframe.pts in PLAYER_STARTED
+when valid.
+
+--- a/xbmc/cores/VideoPlayer/VideoPlayerAudio.h
++++ b/xbmc/cores/VideoPlayer/VideoPlayerAudio.h
+@@ -91,6 +91,7 @@
+   bool m_audioSourceLogged{false};
+ 
+   double m_audioClock;
++  bool m_hasAudioTimestamp{false};
+ 
+   CAudioSinkAE m_audioSink; // audio output device
+   CDVDClock* m_pClock; // dvd master clock
+--- a/xbmc/cores/VideoPlayer/VideoPlayerAudio.cpp
++++ b/xbmc/cores/VideoPlayer/VideoPlayerAudio.cpp
+@@ -140,6 +140,7 @@
+     SwitchCodecIfNeeded();
+ 
+   m_audioClock = 0;
++  m_hasAudioTimestamp = false;
+   m_stalled = m_messageQueue.GetPacketCount(CDVDMsg::DEMUXER_PACKET) == 0;
+ 
+   m_prevsynctype = -1;
+@@ -351,6 +352,7 @@
+       m_audioSink.Flush();
+       m_stalled = true;
+       m_audioClock = 0;
++      m_hasAudioTimestamp = false;
+       audioframe.nb_frames = 0;
+       m_syncState = IDVDStreamPlayer::SYNC_STARTING;
+     }
+@@ -360,6 +362,7 @@
+       m_audioSink.Flush();
+       m_stalled = true;
+       m_audioClock = 0;
++      m_hasAudioTimestamp = false;
+       audioframe.nb_frames = 0;
+ 
+       if (sync)
+@@ -435,6 +438,7 @@
+           m_audioSink.Flush();
+           audioframe.nb_frames = 0;
+         }
++        m_hasAudioTimestamp = false;
+         m_syncState = IDVDStreamPlayer::SYNC_STARTING;
+         continue;
+       }
+@@ -508,6 +511,7 @@
+     else
+     {
+       m_audioClock = audioframe.pts;
++      m_hasAudioTimestamp = true;
+     }
+ 
+     if (audioframe.format.m_sampleRate && m_streaminfo.samplerate != (int) audioframe.format.m_sampleRate)
+@@ -625,7 +629,7 @@
+       msg.player = VideoPlayer_AUDIO;
+       msg.cachetotal = m_audioSink.GetMaxDelay() * DVD_TIME_BASE;
+       msg.cachetime = m_audioSink.GetDelay();
+-      msg.timestamp = audioframe.hasTimestamp ? audioframe.pts : DVD_NOPTS_VALUE;
++      msg.timestamp = (audioframe.hasTimestamp || m_hasAudioTimestamp) ? audioframe.pts : DVD_NOPTS_VALUE;
+       m_messageParent.Put(std::make_shared<CDVDMsgType<SStartMsg>>(CDVDMsg::PLAYER_STARTED, msg));
+ 
+       m_streaminfo.channels = audioframe.format.m_channelLayout.Count();
+@@ -721,6 +726,7 @@
+     return false;
+   }
+ 
+   m_pAudioCodec = std::move(codec);
++  m_hasAudioTimestamp = false;
+ 
+   return true;
+ }

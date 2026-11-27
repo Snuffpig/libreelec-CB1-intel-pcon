@@ -1,0 +1,94 @@
+From: Snuffpig <181518943+Snuffpig@users.noreply.github.com>
+Subject: [PATCH] PlayerProcessInfo: show Render engine meter immediately on open without pop-in
+
+On dialog open, CGUIDialogPlayerProcessInfo::OnInitWindow() resets
+m_renderUsage and immediately calls RefreshInfo(). Because DRM fdinfo
+utilization requires a delta between two samples, the first Sample()
+returns std::nullopt while recording the baseline. Previously,
+DV.GPUAvailable was set to render.has_value(), hiding the Render engine
+bar on frame 0 and causing it to pop in 500 ms later, shifting all
+subsequent footer meters 292 px to the right.
+
+Expose DVBRIDGE::RenderUsage::Available(), which becomes true as soon as
+a homogeneous DRM fdinfo client set (i915, xe, or amdgpu) is observed,
+and stays false when fdinfo telemetry is unavailable or mixed. Use it in
+RefreshInfo() so DV.GPUAvailable is true on frame 0 with a "--"
+placeholder until the first delta arrives, and schedule the first
+refresh at 200 ms instead of 500 ms when awaiting that initial delta.
+
+--- a/xbmc/utils/DVRenderUsage.h
++++ b/xbmc/utils/DVRenderUsage.h
+@@ -90,15 +90,20 @@
+     }
+     const auto& device = current.begin()->second.device;
+     const auto capacity = current.begin()->second.capacity;
++    bool homogeneous = true;
+     bool valid = m_time && now > m_time && now - m_time <= maxGap &&
+                  current.size() == m_previous.size();
+     long double busy = 0;
+     Clients next = current;
+     for (const auto& [id, client] : current)
+     {
+       const auto previous = m_previous.find(id);
+-      if (client.device != device || client.capacity != capacity ||
+-          previous == m_previous.end() || previous->second.capacity != capacity)
++      if (client.device != device || client.capacity != capacity)
++      {
++        homogeneous = false;
++        valid = false;
++      }
++      else if (previous == m_previous.end() || previous->second.capacity != capacity)
+         valid = false;
+       else
+       {
+@@ -110,6 +115,7 @@
+     const auto elapsed = now - m_time;
+     m_previous = std::move(next);
+     m_time = now;
++    m_available = homogeneous;
+     if (!valid)
+       return {};
+     return std::clamp(double(100.0L * busy / elapsed / capacity), 0.0, 100.0);
+@@ -136,14 +142,18 @@
+     return Update(clients, std::chrono::duration_cast<std::chrono::nanoseconds>(now).count(), maxGap);
+   }
+ 
++  bool Available() const { return m_available; }
++
+   void Reset()
+   {
+     m_previous.clear();
+     m_time = 0;
++    m_available = false;
+   }
+ 
+ private:
+   Clients m_previous;
+   uint64_t m_time{};
++  bool m_available{false};
+ };
+ }
+--- a/xbmc/dialogs/GUIDialogPlayerProcessInfo.cpp
++++ b/xbmc/dialogs/GUIDialogPlayerProcessInfo.cpp
+@@ -111,7 +111,7 @@
+   if (enhanced)
+   {
+     RefreshInfo();
+-    m_nextRefresh = CTimeUtils::GetFrameTime() + 500;
++    m_nextRefresh = CTimeUtils::GetFrameTime() + (m_renderUsage.Available() ? 200 : 500);
+   }
+ #endif
+   CGUIDialog::OnInitWindow();
+@@ -303,8 +303,10 @@
+ {
+     const DVBRIDGE::OverlayTimer timing(DVBRIDGE::OverlayStage::Refresh);
+     const auto render = m_renderUsage.Sample();
+-    SetProperty("DV.GPUAvailable", render.has_value());
+-    SetProperty("DV.GPURender", render ? StringUtils::Format("{:.0f} %", *render) : "N/A");
++    const bool gpuAvailable = render.has_value() || m_renderUsage.Available();
++    SetProperty("DV.GPUAvailable", gpuAvailable);
++    SetProperty("DV.GPURender", render ? StringUtils::Format("{:.0f} %", *render) :
++        gpuAvailable ? "--" : "N/A");
+     SetProperty("DV.GPURenderPercent", render ? StringUtils::Format("{:.1f}", *render) : "0");
+     for (const int gauge : {9400, 9401})
+     {

@@ -1,0 +1,138 @@
+From: Snuffpig <181518943+Snuffpig@users.noreply.github.com>
+Subject: [PATCH] PlayerProcessInfo: Show output scan type, wire HDMI format, and scanout container universally
+
+- Append 'i'/'p' scan type to DV.Display (Display output) across both
+  native Kodi rendering and active CB1 playback.
+- Add CWinSystemBase::GetWireOutputTelemetry() (implemented in
+  CWinSystemGbm) to read CB1_OUTPUT_FORMAT, CB1_OUTPUT_BPC, and the
+  active EGL scanout FourCC without guessing when unavailable.
+- Populate DV.HdmiFormat (HDMI format) universally outside LLDV and
+  DV.Transport (Scanout container) when CB1 is inactive, keeping parity
+  with the Dolby Vision overlay without modifying skin XMLs.
+
+--- a/xbmc/windowing/WinSystem.h
++++ b/xbmc/windowing/WinSystem.h
+@@ -86,6 +86,13 @@
+   virtual bool HasFloatOutput() const { return false; }
+   // No value means this backend does not report Blu-ray PSR23 display capability.
+   virtual std::optional<uint32_t> GetBluray3DDisplayCapabilities() const { return std::nullopt; }
++  struct WireOutputTelemetry
++  {
++    std::string format;
++    int bpc{0};
++    uint32_t scanoutFourcc{0};
++  };
++  virtual std::optional<WireOutputTelemetry> GetWireOutputTelemetry() const { return std::nullopt; }
+   virtual bool MoveWindow(int topLeft, int topRight){return false;}
+   virtual void FinishModeChange(RESOLUTION res){}
+   virtual void FinishWindowResize(int newWidth, int newHeight) {ResizeWindow(newWidth, newHeight, -1, -1);}
+--- a/xbmc/windowing/gbm/WinSystemGbm.h
++++ b/xbmc/windowing/gbm/WinSystemGbm.h
+@@ -88,6 +88,8 @@
+   bool SupportsDVOutputMode(bool requireCurrentMode = true) const;
+   bool RefreshDisplayInfoForVideo();
+ #endif
++  std::optional<WireOutputTelemetry> GetWireOutputTelemetry() const override;
++  virtual uint32_t GetScanoutFourcc() const { return 0; }
+ 
+   bool CanDoWindowed() override { return false; }
+   void UpdateResolutions() override;
+--- a/xbmc/windowing/gbm/WinSystemGbmEGLContext.h
++++ b/xbmc/windowing/gbm/WinSystemGbmEGLContext.h
+@@ -41,6 +41,10 @@
+   }
+   int GetBufferAge() override { return m_eglContext.GetBufferAge(); }
+   int GetOutputBitDepth() const override { return m_eglContext.GetConfigAttrib(EGL_RED_SIZE); }
++  uint32_t GetScanoutFourcc() const override
++  {
++    return static_cast<uint32_t>(m_eglContext.GetConfigAttrib(EGL_NATIVE_VISUAL_ID));
++  }
+   bool HasFloatOutput() const override
+   {
+     return m_eglContext.GetConfigAttrib(EGL_NATIVE_VISUAL_ID) == DRM_FORMAT_ABGR16161616F;
+--- a/xbmc/windowing/gbm/WinSystemGbm.cpp
++++ b/xbmc/windowing/gbm/WinSystemGbm.cpp
+@@ -1327,6 +1327,42 @@
+   return std::make_unique<CVideoSyncGbm>(clock);
+ }
+ 
++std::optional<CWinSystemBase::WireOutputTelemetry> CWinSystemGbm::GetWireOutputTelemetry() const
++{
++  WireOutputTelemetry telemetry;
++  telemetry.scanoutFourcc = GetScanoutFourcc();
++
++  if (m_DRM)
++  {
++    if (const auto connector = m_DRM->GetConnector())
++    {
++      if (const auto fmt = connector->ReadPropertyValue("CB1_OUTPUT_FORMAT"))
++      {
++        switch (*fmt)
++        {
++          case 1:
++            telemetry.format = "RGB 4:4:4";
++            break;
++          case 2:
++            telemetry.format = "YCbCr 4:4:4";
++            break;
++          case 3:
++            telemetry.format = "YCbCr 4:2:2";
++            break;
++          case 4:
++            telemetry.format = "YCbCr 4:2:0";
++            break;
++          default:
++            break;
++        }
++      }
++      if (const auto bpc = connector->ReadPropertyValue("CB1_OUTPUT_BPC"))
++        telemetry.bpc = static_cast<int>(*bpc);
++    }
++  }
++  return telemetry;
++}
++
+ std::vector<std::string> CWinSystemGbm::GetConnectedOutputs()
+ {
+   std::vector<std::string> outputs;
+--- a/xbmc/dialogs/GUIDialogPlayerProcessInfo.cpp
++++ b/xbmc/dialogs/GUIDialogPlayerProcessInfo.cpp
+@@ -325,12 +325,15 @@
+     const bool lldv = active && data.output.lldv.has_value();
+     const bool metadata = active && data.metadata;
+     const auto yesno = [](bool value) { return value ? "Yes" : "No"; };
+-    const auto resolution = CServiceBroker::GetWinSystem()->GetGfxContext().GetResInfo();
+-    SetProperty("DV.Display", StringUtils::Format("{}x{} / {:.3f} Hz",
+-        resolution.iScreenWidth, resolution.iScreenHeight, resolution.fRefreshRate));
++    const auto* winSystem = CServiceBroker::GetWinSystem();
++    const auto resolution = winSystem->GetGfxContext().GetResInfo();
++    const char* scanType = (resolution.dwFlags & D3DPRESENTFLAG_INTERLACED) ? "i" : "p";
++    SetProperty("DV.Display", StringUtils::Format("{}x{}{} / {:.3f} Hz",
++        resolution.iScreenWidth, resolution.iScreenHeight, scanType, resolution.fRefreshRate));
+     if (active && data.output.width && data.output.height && data.output.refresh>0)
+-      SetProperty("DV.Display", StringUtils::Format("{}x{} / {:.3f} Hz",
++      SetProperty("DV.Display", StringUtils::Format("{}x{}p / {:.3f} Hz",
+           data.output.width,data.output.height,data.output.refresh));
++    const auto wire = winSystem->GetWireOutputTelemetry();
+     const auto cpu = CServiceBroker::GetCPUInfo();
+     SetProperty("DV.CPU", cpu ? StringUtils::Format("{} %", cpu->GetUsedPercentage()) : "N/A");
+     // Sampled here: System.Memory parses /proc/meminfo on every frame it is displayed.
+@@ -434,12 +437,16 @@
+         data.nativeHDR10PlusFallbackLabel ? localizer.Get(data.nativeHDR10PlusFallbackLabel) : "");
+     SetProperty("DV.MinimumLinkBits", active && data.output.minimumLinkBits ?
+         StringUtils::Format("{}-bit",data.output.minimumLinkBits) : "");
+-    SetProperty("DV.Transport", active ? CDVPlaybackInfo::Transport(data.output.format) : "");
++    SetProperty("DV.Transport", active ? CDVPlaybackInfo::Transport(data.output.format) :
++        (wire && wire->scanoutFourcc) ? CDVPlaybackInfo::Transport(wire->scanoutFourcc) : "");
+     using LldvEncoding = VideoProcessingInfo::PlayerLed::Encoding;
++    const std::string wireHdmiFormat = (wire && !wire->format.empty()) ?
++        (wire->bpc > 0 ? StringUtils::Format("{} / {}-bit", wire->format, wire->bpc) : wire->format) :
++        std::string{};
+     SetProperty("DV.HdmiFormat", lldv ?
+         (data.output.lldv->encoding == LldvEncoding::RGB ? "RGB" :
+          data.output.lldv->encoding == LldvEncoding::YCbCr444 ? "YCbCr 4:4:4" :
+-         data.output.lldv->forcedTransport ? localizer.Get(41339) : "YCbCr 4:2:2") : "");
++         data.output.lldv->forcedTransport ? localizer.Get(41339) : "YCbCr 4:2:2") : wireHdmiFormat);
+     SetProperty("DV.SignalIntent", lldv ? "LLDV" : active & CDVPlaybackInfo::HDMI ?
+         (data.output.iptTransport ? "TV-Led / IPT-PQc2 tunnel" : "TV-Led / YCbCr tunnel") :
+         active & CDVPlaybackInfo::HDR10PLUS ? "PQ / BT.2020 / HDR10+" :
