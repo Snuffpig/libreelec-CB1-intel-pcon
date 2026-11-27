@@ -38,6 +38,14 @@ PCON (Parade PS185):
  	/**
  	 * @pin2port: Check and convert from pin node to port number
  	 *
+@@ -120,6 +127,7 @@
+ 	 * @audio_ops: Ops implemented by hda driver, called by DRM driver
+ 	 */
+ 	const struct drm_audio_component_audio_ops *audio_ops;
++	bool pcon_fixup;
+ 	/**
+ 	 * @master_bind_complete: completion held during component master binding
+ 	 */
 --- a/include/sound/hda_component.h
 +++ b/include/sound/hda_component.h
 @@ -16,6 +16,8 @@
@@ -133,20 +141,28 @@ PCON (Parade PS185):
  #include "intel_display_types.h"
  #include "intel_display_wa.h"
  #include "intel_dp.h"
-@@ -86,6 +90,116 @@
+@@ -86,6 +90,124 @@
  	int cts;
  };
  
-+static bool intel_audio_is_cm11_pcon(void)
++static bool intel_audio_is_cm11_pcon(struct intel_display *display)
 +{
-+	return dmi_match(DMI_BOARD_NAME, "CM11EBV58W");
++	const char *board;
++
++	if (!display->params.dv_pcon)
++		return false;
++	if (display->params.dv_pcon > 0)
++		return true;
++
++	board = dmi_get_system_info(DMI_BOARD_NAME);
++	return board && strstr(board, "CM11EB");
 +}
 +
 +static bool tgl_audio_fault_latched(struct intel_display *display, u32 *status_out)
 +{
 +	u32 val;
 +
-+	if (!intel_audio_is_cm11_pcon() || DISPLAY_VER(display) != 12)
++	if (!intel_audio_is_cm11_pcon(display) || DISPLAY_VER(display) != 12)
 +		return false;
 +
 +	val = intel_de_read(display, TGL_AUD_BE_FAULT_STATUS);
@@ -168,7 +184,7 @@ PCON (Parade PS185):
 +	u32 val = 0, post_val = 0;
 +	bool latched;
 +
-+	if (!intel_audio_is_cm11_pcon() || DISPLAY_VER(display) != 12 ||
++	if (!intel_audio_is_cm11_pcon(display) || DISPLAY_VER(display) != 12 ||
 +	    !display->audio.component_registered)
 +		return;
 +
@@ -250,11 +266,11 @@ PCON (Parade PS185):
  static const struct {
  	int clock;
  	u32 config;
-@@ -431,6 +545,15 @@
+@@ -431,6 +553,15 @@
  	intel_de_rmw(display, HSW_AUD_PIN_ELD_CP_VLD,
  		     AUDIO_OUTPUT_ENABLE(cpu_transcoder), 0);
  
-+	if (intel_audio_is_cm11_pcon()) {
++	if (intel_audio_is_cm11_pcon(display)) {
 +		/* Enforce VESA DP 1.4 Single-VSync (>= 45 ms) drain interval */
 +		msleep(45);
 +
@@ -266,11 +282,11 @@ PCON (Parade PS185):
  	/*
  	 * WA_14020863754: Implement Audio Workaround
  	 * Corner case with Min Hblank Fix can cause audio hang
-@@ -574,6 +697,14 @@
+@@ -574,6 +705,14 @@
  	if (intel_display_wa(display, INTEL_DISPLAY_WA_14020863754))
  		intel_de_rmw(display, AUD_CHICKENBIT_REG3, 0, DACBE_DISABLE_MIN_HBLANK_FIX);
  
-+	if (intel_audio_is_cm11_pcon()) {
++	if (intel_audio_is_cm11_pcon(display)) {
 +		/* Ensure timestamps / DP N_VALUE_INDEX are armed before enabling output */
 +		hsw_audio_config_update(encoder, crtc_state);
 +
@@ -281,7 +297,7 @@ PCON (Parade PS185):
  	/* Enable audio presence detect */
  	intel_de_rmw(display, HSW_AUD_PIN_ELD_CP_VLD,
  		     0, AUDIO_OUTPUT_ENABLE(cpu_transcoder));
-@@ -584,13 +715,15 @@
+@@ -584,13 +723,15 @@
  	intel_de_rmw(display, HSW_AUD_PIN_ELD_CP_VLD,
  		     AUDIO_ELD_VALID(cpu_transcoder), 0);
  
@@ -289,7 +305,7 @@ PCON (Parade PS185):
 -	 * The audio component is used to convey the ELD
 -	 * instead using of the hardware ELD buffer.
 -	 */
-+	if (!intel_audio_is_cm11_pcon()) {
++	if (!intel_audio_is_cm11_pcon(display)) {
 +		/*
 +		 * The audio component is used to convey the ELD
 +		 * instead using of the hardware ELD buffer.
@@ -303,26 +319,26 @@ PCON (Parade PS185):
  
  	mutex_unlock(&display->audio.mutex);
  }
-@@ -946,6 +1079,10 @@
+@@ -946,6 +1087,10 @@
  	intel_lpe_audio_notify(display, cpu_transcoder, port, crtc_state->eld,
  			       crtc_state->port_clock,
  			       intel_crtc_has_dp_encoder(crtc_state));
 +
-+	if (intel_audio_is_cm11_pcon() && DISPLAY_VER(display) == 12)
++	if (intel_audio_is_cm11_pcon(display) && DISPLAY_VER(display) == 12)
 +		mod_delayed_work(system_dfl_wq, &display->audio.fault_check_work,
 +				 msecs_to_jiffies(250));
  }
  
  /**
-@@ -968,6 +1105,7 @@
+@@ -968,6 +1113,7 @@
  	enum transcoder cpu_transcoder = old_crtc_state->cpu_transcoder;
  	struct intel_audio_state *audio_state;
  	enum port port = encoder->port;
-+	bool pcon_quirk = intel_audio_is_cm11_pcon();
++	bool pcon_quirk = intel_audio_is_cm11_pcon(display);
  
  	if (!old_crtc_state->has_audio)
  		return;
-@@ -978,7 +1116,7 @@
+@@ -978,7 +1124,7 @@
  		    encoder->base.base.id, encoder->base.name,
  		    crtc->base.base.id, crtc->base.name);
  
@@ -331,7 +347,7 @@ PCON (Parade PS185):
  		display->audio.funcs->audio_codec_disable(encoder, old_crtc_state, old_conn_state);
  
  	mutex_lock(&display->audio.mutex);
-@@ -1005,6 +1143,9 @@
+@@ -1005,6 +1151,9 @@
  	}
  
  	intel_lpe_audio_notify(display, cpu_transcoder, port, NULL, 0, false);
@@ -341,7 +357,7 @@ PCON (Parade PS185):
  }
  
  static void intel_acomp_get_config(struct intel_encoder *encoder,
-@@ -1205,49 +1346,76 @@
+@@ -1205,49 +1354,76 @@
  	return min_cdclk;
  }
  
@@ -350,13 +366,13 @@ PCON (Parade PS185):
  {
 -	struct intel_display *display = to_intel_display(kdev);
 -	struct ref_tracker *wakeref;
--
--	/* Catch potential impedance mismatches before they occur! */
--	BUILD_BUG_ON(sizeof(wakeref) > sizeof(unsigned long));
 +	if (!display->audio.wakeref)
 +		display->audio.wakeref =
 +			intel_display_power_get(display, POWER_DOMAIN_AUDIO_PLAYBACK);
  
+-	/* Catch potential impedance mismatches before they occur! */
+-	BUILD_BUG_ON(sizeof(wakeref) > sizeof(unsigned long));
+-
 -	wakeref = intel_display_power_get(display, POWER_DOMAIN_AUDIO_PLAYBACK);
 +	if (DISPLAY_VER(display) >= 9) {
 +		intel_de_write(display, AUD_FREQ_CNTRL,
@@ -404,10 +420,10 @@ PCON (Parade PS185):
 +static unsigned long intel_audio_component_get_power(struct device *kdev)
 +{
 +	struct intel_display *display = to_intel_display(kdev);
++
++	mutex_lock(&display->audio.mutex);
  
 -	return (unsigned long)wakeref;
-+	mutex_lock(&display->audio.mutex);
-+
 +	if (display->audio.power_refcount++ == 0)
 +		intel_audio_power_enable(display, false);
 +
@@ -431,19 +447,19 @@ PCON (Parade PS185):
  			glk_force_audio_cdclk(display, false);
 +		if (display->audio.wakeref) {
 +			struct ref_tracker *aud_wakeref = display->audio.wakeref;
- 
--	intel_display_power_put(display, POWER_DOMAIN_AUDIO_PLAYBACK, wakeref);
++
 +			display->audio.wakeref = NULL;
 +			intel_display_power_put(display, POWER_DOMAIN_AUDIO_PLAYBACK,
 +						aud_wakeref);
 +		}
 +	}
-+
+ 
+-	intel_display_power_put(display, POWER_DOMAIN_AUDIO_PLAYBACK, wakeref);
 +	mutex_unlock(&display->audio.mutex);
  }
  
  static void intel_audio_component_codec_wake_override(struct device *kdev,
-@@ -1369,15 +1537,60 @@
+@@ -1369,15 +1545,60 @@
  	}
  
  	encoder = audio_state->encoder;
@@ -457,7 +473,7 @@ PCON (Parade PS185):
  
 -	/* port must be valid now, otherwise the cpu_transcoder will be invalid */
 -	acomp->aud_sample_rate[port] = rate;
-+	if (intel_audio_is_cm11_pcon() && DISPLAY_VER(display) == 12 &&
++	if (intel_audio_is_cm11_pcon(display) && DISPLAY_VER(display) == 12 &&
 +	    crtc->config && intel_crtc_has_dp_encoder(crtc->config)) {
 +		enum transcoder cpu_transcoder = crtc->config->cpu_transcoder;
 +		u32 vld;
@@ -478,9 +494,7 @@ PCON (Parade PS185):
 +			hsw_audio_config_update(encoder, crtc->config);
 +			goto unlock;
 +		}
- 
--	/* FIXME get rid of the crtc->config stuff */
--	hsw_audio_config_update(encoder, crtc->config);
++
 +		vld = intel_de_read(display, HSW_AUD_PIN_ELD_CP_VLD);
 +		was_enabled = vld & AUDIO_OUTPUT_ENABLE(cpu_transcoder);
 +
@@ -499,16 +513,18 @@ PCON (Parade PS185):
 +		hsw_audio_config_update(encoder, crtc->config);
 +	}
 +
-+	if (intel_audio_is_cm11_pcon() && DISPLAY_VER(display) == 12) {
++	if (intel_audio_is_cm11_pcon(display) && DISPLAY_VER(display) == 12) {
 +		unsigned long delay = tgl_audio_fault_latched(display, NULL) ? 150 : 250;
-+
+ 
+-	/* FIXME get rid of the crtc->config stuff */
+-	hsw_audio_config_update(encoder, crtc->config);
 +		mod_delayed_work(system_dfl_wq, &display->audio.fault_check_work,
 +				 msecs_to_jiffies(delay));
 +	}
  
   unlock:
  	mutex_unlock(&display->audio.mutex);
-@@ -1385,6 +1598,39 @@
+@@ -1385,6 +1606,39 @@
  	return err;
  }
  
@@ -521,7 +537,7 @@ PCON (Parade PS185):
 +	struct intel_crtc *crtc;
 +	unsigned long cookie;
 +
-+	if (!intel_audio_is_cm11_pcon() || !HAS_DDI(display))
++	if (!intel_audio_is_cm11_pcon(display) || !HAS_DDI(display))
 +		return;
 +
 +	cookie = intel_audio_component_get_power(kdev);
@@ -548,7 +564,7 @@ PCON (Parade PS185):
  static int intel_audio_component_get_eld(struct device *kdev, int port,
  					 int cpu_transcoder, bool *enabled,
  					 unsigned char *buf, int max_bytes)
-@@ -1422,6 +1668,7 @@
+@@ -1422,6 +1676,7 @@
  	.codec_wake_override = intel_audio_component_codec_wake_override,
  	.get_cdclk_freq = intel_audio_component_get_cdclk_freq,
  	.sync_audio_rate = intel_audio_component_sync_audio_rate,
@@ -556,7 +572,15 @@ PCON (Parade PS185):
  	.get_eld = intel_audio_component_get_eld,
  };
  
-@@ -1571,6 +1818,8 @@
+@@ -1443,6 +1698,7 @@
+ 	drm_modeset_lock_all(display->drm);
+ 	acomp->base.ops = &intel_audio_component_ops;
+ 	acomp->base.dev = drv_kdev;
++	acomp->base.pcon_fixup = intel_audio_is_cm11_pcon(display);
+ 	BUILD_BUG_ON(MAX_PORTS != I915_MAX_PORTS);
+ 	for (i = 0; i < ARRAY_SIZE(acomp->aud_sample_rate); i++)
+ 		acomp->aud_sample_rate[i] = 0;
+@@ -1571,6 +1827,8 @@
   */
  void intel_audio_init(struct intel_display *display)
  {
@@ -565,7 +589,7 @@ PCON (Parade PS185):
  	if (intel_lpe_audio_init(display) < 0)
  		intel_audio_component_init(display);
  }
-@@ -1587,6 +1836,7 @@
+@@ -1587,6 +1845,7 @@
   */
  void intel_audio_deinit(struct intel_display *display)
  {
@@ -1330,15 +1354,21 @@ PCON (Parade PS185):
  	snd_hda_hdmi_generic_init_per_pins(codec);
  	register_i915_notifier(codec);
  	return 0;
-@@ -620,6 +921,7 @@
+@@ -620,6 +921,13 @@
  	spec->port_map = port_map;
  	spec->port_num = port_num;
  	spec->intel_hsw_fixup = true;
-+	spec->intel_pcon_fixup = dmi_match(DMI_BOARD_NAME, "CM11EBV58W");
++	if (codec->bus->core.audio_component) {
++		spec->intel_pcon_fixup = codec->bus->core.audio_component->pcon_fixup;
++	} else {
++		const char *board = dmi_get_system_info(DMI_BOARD_NAME);
++
++		spec->intel_pcon_fixup = board && strstr(board, "CM11EB");
++	}
  	spec->dev_num = dev_num;
  
  	intel_haswell_enable_all_pins(codec, true);
-@@ -630,8 +932,14 @@
+@@ -630,8 +938,14 @@
  	codec->depop_delay = 0;
  	codec->auto_runtime_pm = 1;
  

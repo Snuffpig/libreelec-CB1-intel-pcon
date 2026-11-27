@@ -90,7 +90,7 @@ playback on LibreELEC-yblod 0.3.4-test1.
 +		 * converters on ports B and E, Sony Bravia 7, 4K23.976/59.94. */
 +		.matches = {
 +			DMI_MATCH(DMI_BOARD_VENDOR, "Intel Corporation"),
-+			DMI_EXACT_MATCH(DMI_BOARD_NAME, "CM11EBV58W"),
++			DMI_MATCH(DMI_BOARD_NAME, "CM11EB"),
 +		},
 +	},
 +	{ }

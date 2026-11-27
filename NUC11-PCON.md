@@ -25,6 +25,6 @@ This is a dedicated fork of [CroqueMr/libreelec-CB1](https://github.com/CroqueMr
 
 ## Verified hardware and support policy
 
-* **Tested hardware:** Intel NUC 11 (`CM11EBV58W`, Tiger Lake i5-1145G7) with onboard Parade PS185 DP-to-HDMI PCON feeding a Sony Bravia 7 (eARC to Samsung Q990F).
-* **Other Intel Gen11+ PCON boards:** `linux-9955` defaults `i915.dv_pcon=-1` (verified boards only). Other boards can test Standard DV by passing `i915.dv_pcon=1` on the kernel command line, though `linux-9956`, `linux-9957`, and `linux-9958` are currently DMI-gated to `CM11EBV58W`.
+* **Tested hardware:** Intel NUC 11 (`CM11EB*` (`CM11EBV58W` / non-vPro `CM11EB*`), Tiger Lake i5-1145G7) with onboard Parade PS185 DP-to-HDMI PCON feeding a Sony Bravia 7 (eARC to Samsung Q990F).
+* **Other Intel Gen11+ PCON boards:** `linux-9955` defaults `i915.dv_pcon=-1` (verified boards only). Other Intel Gen11+ / HDA DP-to-HDMI PCON boards can enable the full PCON stack (DV, HDR10 settle, 4K60 4:2:0 HDR10, and HBR/LPCM audio) with a single kernel parameter: `i915.dv_pcon=1` (`-1` = `CM11EB*` auto [default], `0` = off).
 * **Maintenance:** Builds are compiled locally and published on a best-effort basis when upgrading personal hardware. GitHub Issues are disabled on this fork.

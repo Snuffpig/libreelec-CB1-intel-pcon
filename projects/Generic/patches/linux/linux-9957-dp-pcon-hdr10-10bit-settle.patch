@@ -38,12 +38,13 @@ Track when the PS185 converter enters 10-bit mode (pipe_bpp >= 30) and:
  void intel_dp_link_cleanup(struct intel_dp *intel_dp);
 --- a/drivers/gpu/drm/i915/display/intel_dp.c
 +++ b/drivers/gpu/drm/i915/display/intel_dp.c
-@@ -3593,6 +3593,159 @@
+@@ -3593,6 +3593,161 @@
  		intel_dp_has_hdmi_sink(intel_dp);
  }
  
 +static bool intel_dp_is_cm11_pcon(struct intel_dp *intel_dp)
 +{
++	struct intel_display *display = to_intel_display(intel_dp);
 +	struct intel_encoder *encoder = &dp_to_dig_port(intel_dp)->base;
 +	const struct intel_bios_encoder_data *devdata = encoder->devdata;
 +
@@ -51,7 +52,8 @@ Track when the PS185 converter enters 10-bit mode (pipe_bpp >= 30) and:
 +		!intel_dp_is_edp(intel_dp) &&
 +		!intel_bios_encoder_is_lspcon(devdata) &&
 +		intel_bios_encoder_supports_hdmi(devdata) &&
-+		dmi_check_system(intel_dp_pcon_dv_dmi) &&
++		display->params.dv_pcon &&
++		(display->params.dv_pcon > 0 || dmi_check_system(intel_dp_pcon_dv_dmi)) &&
 +		intel_dp_pcon_dv_route(intel_dp);
 +}
 +
